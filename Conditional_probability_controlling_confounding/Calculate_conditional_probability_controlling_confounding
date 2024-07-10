@@ -1,0 +1,93 @@
+"""This is an example code of how we can calculate conditional probability distributions on observational data with
+confounder control and without confounder control:
+
+- P_occ(Y | T, X), where occ denotes using observational data with confounder control
+- P_oncc(Y | T, X), where oncc denotes using observational data with no confounder control
+
+"""
+
+import pandas as pd
+
+# Define the dataset
+data = {
+    'Y': [0, 1, 1, 0, 1, 1, 0, 1],
+    'X': [0, 0, 0, 0, 1, 1, 1, 1],
+    'T': [0, 0, 1, 1, 0, 0, 1, 1],
+    'A': [0, 0, 0, 1, 1, 0, 1, 0]
+}
+
+df = pd.DataFrame(data)
+
+# Function to calculate P(Y=1| T, X) by marginalizing over A (confounding control)
+def calculate_Y_given_T_X_cc(df, T_val, X_val):
+    # Calculate counts
+    count_X_T = df.groupby(['T', 'X']).size()
+    count_X = df.groupby(['X']).size()
+    count_X_T_A = df.groupby(['T', 'X', 'A']).size()
+    count_X_A = df.groupby(['X', 'A']).size()
+    count_Y_X_T_A = df.groupby(['Y', 'T', 'X', 'A']).size()
+
+    p_Y_given_X_T = 0
+    for a in df['A'].unique():
+        count_X_T_A_a = count_X_T_A.get((T_val, X_val, a), 0)
+        count_X_A_a = count_X_A.get((X_val, a), 0)
+        count_Y_X_T_A_1 = count_Y_X_T_A.get((1, T_val, X_val, a), 0)
+        count_X_T_val = count_X_T.get((T_val, X_val), 0)
+
+        # Access count of X directly using square brackets
+        count_X_val = count_X[X_val]
+
+        if count_X_T_A_a > 0 and count_X_T_val > 0 and count_X_val > 0:
+            p_Y_given_X_T_A = count_Y_X_T_A_1 / count_X_T_A_a
+            p_A_given_X = count_X_A_a / count_X_val
+            p_Y_given_X_T += p_Y_given_X_T_A * p_A_given_X
+
+    return p_Y_given_X_T
+
+
+print('Results with confounding control')
+# Calculate P(Y=1|T=0, X=0)
+p_Y_1_given_T_0_X_0 = calculate_Y_given_T_X_cc(df, 0, 0)
+print(f"P_cc(Y=1| T=0, X=0) = {p_Y_1_given_T_0_X_0}")
+
+# Calculate P(Y=1|T=1, X=0)
+p_Y_1_given_T_1_X_0 = calculate_Y_given_T_X_cc(df, 1, 0)
+print(f"P_cc(Y=1| T=1, X=0) = {p_Y_1_given_T_1_X_0}")
+
+# Calculate P(Y=1|T=0, X=1)
+p_Y_1_given_T_0_X_1 = calculate_Y_given_T_X_cc(df, 0, 1)
+print(f"P_cc(Y=1|T=0, X=1) = {p_Y_1_given_T_0_X_1}")
+
+# Calculate P(Y=1|T=1, X=1)
+p_Y_1_given_T_1_X_1 = calculate_Y_given_T_X_cc(df, 1, 1)
+print(f"P_cc(Y=1| T=1, X=1) = {p_Y_1_given_T_1_X_1}")
+
+# Function to calculate P(Y|T, X) without confounding control
+def calculate_Y_given_T_X_ncc(df, Y_val, T_val, X_val):
+    count_Y_T_X = df.groupby(['Y', 'T', 'X']).size()
+    count_T_X = df.groupby(['T', 'X']).size()
+    numerator = count_Y_T_X.get((Y_val, T_val, X_val), 0)
+    denominator = count_T_X.get((T_val, X_val), 0)
+
+    if denominator > 0:
+        return numerator / denominator
+    else:
+        return 0  # Handle the case where denominator is zero if necessary
+
+
+print('Results without confounding control')
+# Calculate P(Y=1|T=0, X=0)
+p_Y_1_given_T_0_X_0 = calculate_Y_given_T_X_ncc(df, 1, 0, 0)
+print(f"P(Y=1|T=0, X=0) = {p_Y_1_given_T_0_X_0}")
+
+# Calculate P(Y=1|T=0, X=1)
+p_Y_1_given_T_0_X_1 = calculate_Y_given_T_X_ncc(df, 1, 0, 1)
+print(f"P(Y=1|T=0, X=1) = {p_Y_1_given_T_0_X_1}")
+
+# Calculate P(Y=1|T=1, X=0)
+p_Y_1_given_T_1_X_0 = calculate_Y_given_T_X_ncc(df, 1, 1, 0)
+print(f"P(Y=1|T=1, X=0) = {p_Y_1_given_T_1_X_0}")
+
+# Calculate P(Y=1|T=1, X=1)
+p_Y_1_given_T_1_X_1 = calculate_Y_given_T_X_ncc(df, 1, 1, 1)
+print(f"P(Y=1|T=1, X=1) = {p_Y_1_given_T_1_X_1}")
