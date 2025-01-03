@@ -1,4 +1,6 @@
 # Conda_Credit
+
+## Implementation
 A repository that contains folders for tasks: 
 
 1. Calculate the conditional probabilities for the outcome with and without controlling the confounding.
@@ -12,3 +14,7 @@ A repository that contains folders for tasks:
 9. A way to generate synthetic data (both experimental and observational data) for binary outcomes in the case of (a) binary or (b) both binary and ordinal covariates using a logistic regression model. Based on the ground truth model that the experimental data entails we synthetically introduce a confounding variable that affects both the treatment and the outcome and we create observational data.
     
 11. A new algorithm (TranSampler) has been proposed for scoring sets that can be used to transport causal knowledge from the source to a target population when we have available only experimental data from the source population (De) and observational data from the target population (Do*). These sets are s-admissible and we can identify them only if they are also adjustment sets for the target population.
+
+    ## Contact
+    If you have any questions, email me:  [konlelova@gmail.com](mailto:konlelova@gmail.com) 
+
