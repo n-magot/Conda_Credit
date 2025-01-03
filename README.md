@@ -1,5 +1,5 @@
 # Conda_Credit
-A 2024 project on "Individualized Prediction of Treatment Effects Using Data from Both Embedded Clinical Trials and Electronic Health Records".
+My 2024 contributions to the 'Individualized Prediction of Treatment Effects Using Data from Both Embedded Clinical Trials and Electronic Health Records' project.
 ## Implementation
 A repository that contains folders for tasks: 
 
