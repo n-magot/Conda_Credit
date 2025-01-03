@@ -5,7 +5,7 @@ A repository that contains folders for tasks:
    
 3. Create a random dag and simulate mixed data (binary and continuous) from a DAG.
    
-5. Python implementation for the extension of the FindIMB algorithm which is limited to categorical data proposed by [Triantafillou et al. (2021)](https://proceedings.mlr.press/v161/triantafillou21a.html), to ordinal and binary outcomes, binary treatments, and mixed covariates. FindIMB extended algorithm, uses Bayesian regression models and approximate inference for combining observational and experimental data to learn causal and interventional Markov boundaries and improve causal estimation:  [lelova24a.pdf](https://proceedings.mlr.press/v246/lelova24a.html). This implementation approximates MB using Bayesian Regression models for low-dimensional datasets.
+5. Python implementation for the extension of the FindIMB algorithm which is limited to categorical data proposed by ( [Triantafillou et al. (2021)](https://proceedings.mlr.press/v161/triantafillou21a.html) ), to ordinal and binary outcomes, binary treatments, and mixed covariates. FindIMB extended algorithm, uses Bayesian regression models and approximate inference for combining observational and experimental data to learn causal and interventional Markov boundaries and improve causal estimation, ( [lelova24a.pdf](https://proceedings.mlr.press/v246/lelova24a.html) ). This implementation approximates MB using Bayesian Regression models for low-dimensional datasets.
    
 7. An optimized version of FindIMB for mixed data types using Brute-force search with pruning for scaling up the method to allow for more conditioning covariates.
    
