@@ -125,6 +125,7 @@ y_test = De_test['Y']
 GT_log_loss = log_loss_GT(X_test, y_test, coefs, intercepts)
 
 Z_cols = ['X', 'Z1', 'Z2']
+FS = Z_cols
 Y_col = 'Y'
 
 
@@ -247,6 +248,7 @@ df_scores = run_subset_pipeline(Do, De, 'X', ['Z1', 'Z2'], 'Y')
 
 print(df_scores.round(4))
 
+
 def compute_posterior_predictive_both_hypotheses(N_o_jk, N_o_j, N_e_jk, N_e_j, alpha_jk, alpha_j):
     """
     Returns:
@@ -261,7 +263,11 @@ def compute_posterior_predictive_both_hypotheses(N_o_jk, N_o_j, N_e_jk, N_e_j, a
     denominator_HZc_bar = (N_e_j + alpha_j)[:, np.newaxis]
     probs_Y_HZc_bar = numerator_HZc_bar / denominator_HZc_bar
 
-    return probs_Y_HZc, probs_Y_HZc_bar
+    numerator_obs = N_o_jk + alpha_jk
+    denominator_obs = (N_o_j + alpha_j)[:, np.newaxis]
+    probs_Y_obs = numerator_obs / denominator_obs
+
+    return probs_Y_HZc, probs_Y_HZc_bar, probs_Y_obs
 
 
 results = []
@@ -279,7 +285,7 @@ for Z_cols in subsets:
     alpha_j = np.sum(alpha_jk, axis=1)
 
     # Predictive probs under both hypotheses
-    probs_Y_HZc, probs_Y_HZc_bar = compute_posterior_predictive_both_hypotheses(
+    probs_Y_HZc, probs_Y_HZc_bar, probs_Y_obs = compute_posterior_predictive_both_hypotheses(
         N_o_jk, N_o_j, N_e_jk, N_e_j, alpha_jk, alpha_j
     )
 
@@ -288,6 +294,7 @@ for Z_cols in subsets:
 
     probs_rows_HZc = []
     probs_rows_HZc_bar = []
+    probs_rows_obs = []
 
     for _, row in De_test.iterrows():
         z_tuple = tuple(row[col] for col in Z_cols)
@@ -296,36 +303,43 @@ for Z_cols in subsets:
         if idx is not None:
             probs1 = probs_Y_HZc[idx]
             probs2 = probs_Y_HZc_bar[idx]
+            probs_obs = probs_Y_obs[idx]
         else:
             K = N_o_jk.shape[1]
-            probs1 = probs2 = np.ones(K) / K  # fallback to uniform
+            probs1 = probs2 = probs_obs = np.ones(K) / K  # fallback to uniform
 
         probs_rows_HZc.append(probs1)
         probs_rows_HZc_bar.append(probs2)
+        probs_rows_obs.append(probs_obs)
 
     # Build dataframe
     df_Prob_Y_Hzc = pd.DataFrame(probs_rows_HZc, columns=[f"P_HZc(Y={k})" for k in range(probs_Y_HZc.shape[1])])
     df_Prob_Y_Hzc_bar = pd.DataFrame(probs_rows_HZc_bar, columns=[f"P_HZc_bar(Y={k})" for k in range(probs_Y_HZc_bar.shape[1])])
+    df_Prob_Y_obs = pd.DataFrame(probs_rows_obs, columns=[f"P_obs(Y={k})" for k in range(probs_Y_obs.shape[1])])
 
-    #posterior predictive probabilities*P_Hzc/P_Hzc_bar
+    #posterior predictive probabilities* (P_Hzc/P_Hzc_bar)
     # print('df_Prob_Hzc', df_Prob_Y_Hzc)
     # print('df_Prob_Hzc_bar', df_Prob_Y_Hzc_bar)
 
     P_Hz_c = df_scores.loc[df_scores['Variables'] == tuple(Z_cols), 'P_HZ_c'].values
     P_Hz_c_bar = df_scores.loc[df_scores['Variables'] == tuple(Z_cols), 'P_HZ_c_bar'].values
-    """Des mia giati allazei megethos"""
-    # print(probs_HZc)
 
     P_Y_alg = (df_Prob_Y_Hzc * P_Hz_c[0]).to_numpy() + (df_Prob_Y_Hzc_bar * P_Hz_c_bar[0]).to_numpy()
-    P_Y_exp = df_Prob_Y_Hzc_bar.to_numpy()
+
+    if Z_cols == FS:
+        P_Y_exp = df_Prob_Y_Hzc_bar.to_numpy()
+        P_Y_obs = df_Prob_Y_obs.to_numpy()
 
 
 y_true = De_test['Y']
 
 alg_loss = log_loss(y_true, P_Y_alg)
 print(f"Log loss algorithm: {alg_loss}")
-
 exp_loss = log_loss(y_true, P_Y_exp)
 print(f"Log loss experimental: {exp_loss}")
+obs_loss = log_loss(y_true, P_Y_obs)
+print(f"Log loss observational: {obs_loss}")
 
 print(f"Log loss GT: {GT_log_loss}")
+
+
