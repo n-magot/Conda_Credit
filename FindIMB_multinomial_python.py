@@ -49,44 +49,51 @@ def simulate_multinomial_logit_exp(n_samples, coefs=None, intercepts=None):
     return df
 
 
+import numpy as np
+import pandas as pd
+from scipy.special import softmax
+
 def simulate_multinomial_logit_obs(n_samples, coefs=None, intercepts=None):
     np.random.seed(42)
 
-    # Simulate 2 binary features
+    # Simulate 2 binary features Z1, Z2
     X = np.random.randint(0, 2, size=(n_samples, 2))  # shape (n_samples, 2)
 
-    # Simulate C and then T depending on C
+    # Simulate binary confounder C
     C = np.random.randint(0, 2, size=(n_samples, 1))  # shape (n_samples, 1)
+
+    # T depends on confounder C
     logit_T = 1.8 * C
     prob_T = 1 / (1 + np.exp(-logit_T))
     T = np.random.binomial(1, prob_T.flatten())  # shape (n_samples,)
 
-    # Combine T and X into a single feature matrix with T as the first column
+    # Combine T, Z1, Z2, and C into a feature matrix
     T_col = T.reshape(-1, 1)
-    X_new = np.hstack((T_col, X))  # shape (n_samples, 3)
+    X_new = np.hstack((T_col, X, C))  # shape (n_samples, 4)
 
-    # Default coefficients and intercepts for 3 classes
+    # Default coefficients for 3 classes with 4 features: [T, Z1, Z2, C]
     if coefs is None:
         coefs = np.array([
-            [1.0, -1.0, 0.5],  # weights for class 0
-            [-0.5, 1.5, -1.0],  # weights for class 1
-            [0.0, -0.5, 1.0]  # weights for class 2
-        ])  # shape (3, 3)
+            [1.0, -1.0, 0.5, 0.7],   # class 0
+            [-0.5, 1.5, -1.0, -0.3], # class 1
+            [0.0, -0.5, 1.0, 0.4]    # class 2
+        ])  # shape (3, 4)
     if intercepts is None:
         intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
 
-    # Compute logits and convert to probabilities
-    logits = X_new @ coefs.T + intercepts  # shape (n_samples, 3)
-    probs = softmax(logits, axis=1)  # shape (n_samples, 3)
+    # Compute logits and probabilities
+    logits = X_new @ coefs.T + intercepts
+    probs = softmax(logits, axis=1)
 
-    # Sample Y from the categorical distribution
+    # Sample Y from the multinomial distribution
     Y = np.array([np.random.choice(3, p=probs[i]) for i in range(n_samples)])
 
-    # Create DataFrame with proper column names
-    df = pd.DataFrame(X_new, columns=['X', 'Z1', 'Z2'])
+    # Create DataFrame
+    df = pd.DataFrame(X_new, columns=['X', 'Z1', 'Z2', 'C'])  # X = T
     df['Y'] = Y
 
     return df
+
 
 def log_loss_GT(X_test,y_test, coefs, intercepts):
 
@@ -107,7 +114,7 @@ coefs = np.array([
             [-0.5, 1.5, -1.0],  # weights for class 1
             [0.0, -0.5, 1.0]  # weights for class 2
         ])  # shape (3, 3)
-# coefs *= 2
+coefs *= 2
 
 intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
 
@@ -115,9 +122,10 @@ No = 10000
 Ne = 300
 Ntest = 2000
 
-Do = simulate_multinomial_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
+Do = simulate_multinomial_logit_obs(n_samples=No, coefs=None, intercepts=None)
 De = simulate_multinomial_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
 De_test = simulate_multinomial_logit_exp(n_samples=Ntest, coefs=coefs, intercepts=intercepts)
+
 
 X_test = De_test[['X', 'Z1', 'Z2']]
 y_test = De_test['Y']
@@ -129,23 +137,25 @@ FS = Z_cols
 Y_col = 'Y'
 
 
+import itertools
+import numpy as np
+import pandas as pd
+
 def get_counts_multiZ(df, Z_cols, Y_col):
-    """
-    Count N_j and N_jk for arbitrary-length Z vector (can be multiple columns).
-
-    Returns:
-    - Z_values: list of tuples for each unique Z configuration
-    - Y_values: list of unique Y values
-    - N_j: array of total counts per Z configuration
-    - N_jk: 2D array of shape [num Z configs, num Y values]
-    """
-    # Ensure categorical treatment
     df = df.copy()
-    for col in Z_cols + [Y_col]:
-        df[col] = df[col].astype('category')
 
-    Z_values = list(df[Z_cols].drop_duplicates().itertuples(index=False, name=None))
-    Y_values = list(df[Y_col].cat.categories)
+    # Force Z columns to categorical with categories [0, 1] (default assumption)
+    for col in Z_cols:
+        if df[col].dtype.name != 'category':
+            df[col] = pd.Categorical(df[col], categories=[0, 1])
+
+    # Y column categorical as usual
+    df[Y_col] = df[Y_col].astype('category')
+    Y_values = df[Y_col].cat.categories.tolist()
+
+    # Cartesian product of Z categories (all possible 0/1 combos)
+    Z_categories = [df[col].cat.categories.tolist() for col in Z_cols]
+    Z_values = list(itertools.product(*Z_categories))
 
     index_map = {z: i for i, z in enumerate(Z_values)}
     y_map = {y: i for i, y in enumerate(Y_values)}
@@ -156,24 +166,35 @@ def get_counts_multiZ(df, Z_cols, Y_col):
     for _, row in df.iterrows():
         z_tuple = tuple(row[Z_cols])
         y_val = row[Y_col]
+        if any(pd.isnull(v) for v in z_tuple) or pd.isnull(y_val):
+            continue
         i = index_map[z_tuple]
         k = y_map[y_val]
         N_j[i] += 1
         N_jk[i, k] += 1
 
-    return Z_values, Y_values, N_j, N_jk
+    df_counts = pd.DataFrame(N_jk, index=Z_values, columns=Y_values)
+    df_counts.index.name = "Z_configuration"
+    df_counts["Total"] = N_j
+
+    return Z_values, Y_values, N_j, N_jk, df_counts
 
 
-Z_vals_Do, Y_vals_Do, N_o_j, N_o_jk = get_counts_multiZ(Do, Z_cols, Y_col)
-Z_vals_De, Y_vals_De, N_e_j, N_e_jk = get_counts_multiZ(De, Z_cols, Y_col)
+Z_vals_Do, Y_vals_Do, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, Z_cols, Y_col)
+Z_vals_De, Y_vals_De, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, Z_cols, Y_col)
 
 print("Counts from Do:")
+print("list of unique Y values", Y_vals_Do)
+print("list of tuples for each unique Z configuration", Z_vals_Do)
 print("N_o_j =", N_o_j)
 print("N_o_jk =\n", N_o_jk)
+
+print("df_counts_o",df_counts_o)
 
 print("\nCounts from De:")
 print("N_e_j =", N_e_j)
 print("N_e_jk =\n", N_e_jk)
+print("df_counts_e", df_counts_e)
 
 def dirichlet_bayesian_score(counts, priors=None):
     counts = np.asarray(counts)
@@ -214,8 +235,8 @@ def run_subset_pipeline(Do, De, X_col, Z_cols, Y_col, priors_val=1):
             current_vars = [X_col] + list(subset)
 
             # Get counts for Do and De
-            _, _, N_o_j, N_o_jk = get_counts_multiZ(Do, current_vars, Y_col)
-            _, _, N_e_j, N_e_jk = get_counts_multiZ(De, current_vars, Y_col)
+            _, _, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, current_vars, Y_col)
+            _, _, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, current_vars, Y_col)
 
             # Priors: alpha_jk = 1 uniformly
             alpha_jk = np.ones_like(N_o_jk) * priors_val
@@ -277,8 +298,8 @@ subsets = [list(t) for t in tuple_subsets]
 
 for Z_cols in subsets:
     # Get counts for each Z config
-    Z_vals_Do, _, N_o_j, N_o_jk = get_counts_multiZ(Do, Z_cols, 'Y')
-    Z_vals_De, _, N_e_j, N_e_jk = get_counts_multiZ(De, Z_cols, 'Y')
+    Z_vals_Do, _, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, Z_cols, 'Y')
+    Z_vals_De, _, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, Z_cols, 'Y')
 
     # Priors
     alpha_jk = np.ones_like(N_o_jk)
@@ -341,5 +362,3 @@ obs_loss = log_loss(y_true, P_Y_obs)
 print(f"Log loss observational: {obs_loss}")
 
 print(f"Log loss GT: {GT_log_loss}")
-
-
