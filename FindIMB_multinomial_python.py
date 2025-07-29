@@ -1,14 +1,14 @@
 from scipy.special import gammaln
-import numpy as np
-import pandas as pd
-import itertools
 from sklearn.metrics import log_loss
 from scipy.special import softmax
-
+from scipy.special import logsumexp
+import itertools
+import numpy as np
+import pandas as pd
 
 np.random.seed(42)
 
-def simulate_multinomial_logit_exp(n_samples, coefs=None, intercepts=None):
+def simulate_multinomial_logit_exp(n_samples, coefs, intercepts):
     """
     Simulates data for a 3-class multinomial logistic regression model.
 
@@ -23,63 +23,39 @@ def simulate_multinomial_logit_exp(n_samples, coefs=None, intercepts=None):
     np.random.seed(42)
 
     # Simulate features: let's assume 3 binary features
-    X = np.random.randint(0, 2, size=(n_samples, 3))  # features: X1, X2, X3
-    num_classes = 3
-
-    if coefs is None:
-        coefs = np.array([
-            [1.0, -1.0, 0.5],  # weights for class 0
-            [-0.5, 1.5, -1.0],  # weights for class 1
-            [0.0, -0.5, 1.0]  # weights for class 2
-        ])  # shape (3, 3)
-    if intercepts is None:
-        intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
+    T = np.random.randint(0, 2, size=(n_samples, 1))
+    Z = np.random.randint(0, 2, size=(n_samples, 1))
+    C = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((T, Z, C))
 
     # Compute logits (shape: [n_samples, 3])
-    logits = X @ coefs.T + intercepts  # matrix multiplication
-    probs = softmax(logits, axis=1)  # convert logits to probabilities
+    logits = X @ coefs.T + intercepts
+    probs = softmax(logits, axis=1)
 
     # Sample Y from the categorical distribution
     Y = np.array([np.random.choice(3, p=probs[i]) for i in range(n_samples)])
 
     # Combine into a DataFrame
-    df = pd.DataFrame(X, columns=['X', 'Z1', 'Z2'])
+    df = pd.DataFrame(X, columns=['T', 'Z', 'C'])
     df['Y'] = Y
 
     return df
 
-
-import numpy as np
-import pandas as pd
-from scipy.special import softmax
-
-def simulate_multinomial_logit_obs(n_samples, coefs=None, intercepts=None):
+def simulate_multinomial_logit_obs(n_samples, coefs, intercepts):
     np.random.seed(42)
 
     # Simulate 2 binary features Z1, Z2
-    X = np.random.randint(0, 2, size=(n_samples, 2))  # shape (n_samples, 2)
+    Z = np.random.randint(0, 2, size=(n_samples, 1))
+    C = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((Z, C))
 
-    # Simulate binary confounder C
-    C = np.random.randint(0, 2, size=(n_samples, 1))  # shape (n_samples, 1)
-
-    # T depends on confounder C
-    logit_T = 1.8 * C
+    logit_T = 3.8 * X[:, 1]
     prob_T = 1 / (1 + np.exp(-logit_T))
     T = np.random.binomial(1, prob_T.flatten())  # shape (n_samples,)
 
     # Combine T, Z1, Z2, and C into a feature matrix
     T_col = T.reshape(-1, 1)
-    X_new = np.hstack((T_col, X, C))  # shape (n_samples, 4)
-
-    # Default coefficients for 3 classes with 4 features: [T, Z1, Z2, C]
-    if coefs is None:
-        coefs = np.array([
-            [1.0, -1.0, 0.5, 0.7],   # class 0
-            [-0.5, 1.5, -1.0, -0.3], # class 1
-            [0.0, -0.5, 1.0, 0.4]    # class 2
-        ])  # shape (3, 4)
-    if intercepts is None:
-        intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
+    X_new = np.hstack((T_col, X))
 
     # Compute logits and probabilities
     logits = X_new @ coefs.T + intercepts
@@ -89,7 +65,7 @@ def simulate_multinomial_logit_obs(n_samples, coefs=None, intercepts=None):
     Y = np.array([np.random.choice(3, p=probs[i]) for i in range(n_samples)])
 
     # Create DataFrame
-    df = pd.DataFrame(X_new, columns=['X', 'Z1', 'Z2', 'C'])  # X = T
+    df = pd.DataFrame(X_new, columns=['T', 'Z', 'C'])  # X = T
     df['Y'] = Y
 
     return df
@@ -110,36 +86,39 @@ def log_loss_GT(X_test,y_test, coefs, intercepts):
 
 """Inputs for simulate the data"""
 coefs = np.array([
-            [1.0, -1.0, 0.5],  # weights for class 0
-            [-0.5, 1.5, -1.0],  # weights for class 1
-            [0.0, -0.5, 1.0]  # weights for class 2
-        ])  # shape (3, 3)
-coefs *= 2
+    [3.0, -3.0, 2.5],
+    [4.5, 4.5, -3.0],
+    [3.6, -1.5, 3.0]
+])
 
 intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
 
-No = 10000
-Ne = 300
-Ntest = 2000
+coefs_GT = np.array([
+    [3.0, -3.0, 2.5],
+    [4.5, 4.5, -3.0],
+    [3.6, -1.5, 3.0]
+])
 
-Do = simulate_multinomial_logit_obs(n_samples=No, coefs=None, intercepts=None)
+intercepts_GT = np.array([0.2, -0.1, 0.3])
+
+No = 5000
+Ne = 100
+Ntest = 1000
+
+Do = simulate_multinomial_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
 De = simulate_multinomial_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
 De_test = simulate_multinomial_logit_exp(n_samples=Ntest, coefs=coefs, intercepts=intercepts)
 
 
-X_test = De_test[['X', 'Z1', 'Z2']]
+X_test = De_test[['T', 'Z', 'C']]
 y_test = De_test['Y']
 
-GT_log_loss = log_loss_GT(X_test, y_test, coefs, intercepts)
+GT_log_loss = log_loss_GT(X_test, y_test, coefs_GT, intercepts_GT)
 
-Z_cols = ['X', 'Z1', 'Z2']
+Z_cols = ['T', 'Z', 'C']
 FS = Z_cols
 Y_col = 'Y'
 
-
-import itertools
-import numpy as np
-import pandas as pd
 
 def get_counts_multiZ(df, Z_cols, Y_col):
     df = df.copy()
@@ -247,25 +226,34 @@ def run_subset_pipeline(Do, De, X_col, Z_cols, Y_col, priors_val=1):
             p_hzcbar_log = P_De_given_HZc_bar_log(N_e_jk, priors)
 
             # Store in dict
+            # Store values (no exp yet!)
             results.append({
                 'Variables': tuple(current_vars),
                 'P(De|Do,HcZ) log': p_hzc_log,
                 'P(De|Do,HcZ_bar) log': p_hzcbar_log,
-                'P_HZ_c': np.exp(p_hzc_log),
-                'P_HZ_c_bar': np.exp(p_hzcbar_log),
             })
 
-    total = sum([res['P_HZ_c'] + res['P_HZ_c_bar'] for res in results])
-    for res in results:
-        res['P_HZ_c'] /= total
-        res['P_HZ_c_bar'] /= total
+        # --- Compute total log-sum to normalize safely ---
+        log_total = logsumexp([
+            np.logaddexp(res['P(De|Do,HcZ) log'], res['P(De|Do,HcZ_bar) log'])
+            for res in results
+        ])
+
+        # --- Normalize probabilities in log-space and store them ---
+        for res in results:
+            p_hzc_log = res['P(De|Do,HcZ) log']
+            p_hzcbar_log = res['P(De|Do,HcZ_bar) log']
+
+            # Normalized probabilities in real space using log-sum-exp trick
+            res['P_HZ_c'] = np.exp(p_hzc_log - log_total)
+            res['P_HZ_c_bar'] = np.exp(p_hzcbar_log - log_total)
 
     # Convert to DataFrame
     df_results = pd.DataFrame(results)
     return df_results
 
 # Run it
-df_scores = run_subset_pipeline(Do, De, 'X', ['Z1', 'Z2'], 'Y')
+df_scores = run_subset_pipeline(Do, De, 'T', ['Z', 'C'], 'Y')
 
 print(df_scores.round(4))
 
