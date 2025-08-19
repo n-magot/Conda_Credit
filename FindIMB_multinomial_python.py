@@ -6,6 +6,7 @@ import itertools
 import numpy as np
 import pandas as pd
 
+#Standard seed for reproducibility
 np.random.seed(42)
 
 def simulate_multinomial_logit_exp(n_samples, coefs, intercepts):
@@ -70,7 +71,6 @@ def simulate_multinomial_logit_obs(n_samples, coefs, intercepts):
 
     return df
 
-
 def log_loss_GT(X_test,y_test, coefs, intercepts):
 
     # Compute logits for all samples and classes
@@ -83,42 +83,6 @@ def log_loss_GT(X_test,y_test, coefs, intercepts):
     loss = log_loss(y_test, probs)
 
     return loss
-
-"""Inputs for simulate the data"""
-coefs = np.array([
-    [3.0, -3.0, 2.5],
-    [4.5, 4.5, -3.0],
-    [3.6, -1.5, 3.0]
-])
-
-intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
-
-coefs_GT = np.array([
-    [3.0, -3.0, 2.5],
-    [4.5, 4.5, -3.0],
-    [3.6, -1.5, 3.0]
-])
-
-intercepts_GT = np.array([0.2, -0.1, 0.3])
-
-No = 5000
-Ne = 100
-Ntest = 1000
-
-Do = simulate_multinomial_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
-De = simulate_multinomial_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
-De_test = simulate_multinomial_logit_exp(n_samples=Ntest, coefs=coefs, intercepts=intercepts)
-
-
-X_test = De_test[['T', 'Z', 'C']]
-y_test = De_test['Y']
-
-GT_log_loss = log_loss_GT(X_test, y_test, coefs_GT, intercepts_GT)
-
-Z_cols = ['T', 'Z', 'C']
-FS = Z_cols
-Y_col = 'Y'
-
 
 def get_counts_multiZ(df, Z_cols, Y_col):
     df = df.copy()
@@ -159,22 +123,6 @@ def get_counts_multiZ(df, Z_cols, Y_col):
     return Z_values, Y_values, N_j, N_jk, df_counts
 
 
-Z_vals_Do, Y_vals_Do, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, Z_cols, Y_col)
-Z_vals_De, Y_vals_De, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, Z_cols, Y_col)
-
-print("Counts from Do:")
-print("list of unique Y values", Y_vals_Do)
-print("list of tuples for each unique Z configuration", Z_vals_Do)
-print("N_o_j =", N_o_j)
-print("N_o_jk =\n", N_o_jk)
-
-print("df_counts_o",df_counts_o)
-
-print("\nCounts from De:")
-print("N_e_j =", N_e_j)
-print("N_e_jk =\n", N_e_jk)
-print("df_counts_e", df_counts_e)
-
 def dirichlet_bayesian_score(counts, priors=None):
     counts = np.asarray(counts)
     if priors is None:
@@ -182,23 +130,24 @@ def dirichlet_bayesian_score(counts, priors=None):
     N = np.sum(counts, axis=-1)
     sum_priors = np.sum(priors + 1, axis=-1)
     score_in = (
-        gammaln(sum_priors)
-        - np.sum(gammaln(priors + 1), axis=-1)
-        + np.sum(gammaln(counts + priors + 1), axis=-1)
-        - gammaln(N + sum_priors)
+            gammaln(sum_priors)
+            - np.sum(gammaln(priors + 1), axis=-1)
+            + np.sum(gammaln(counts + priors + 1), axis=-1)
+            - gammaln(N + sum_priors)
     )
     if score_in.ndim > 0:
         return np.sum(score_in)
     else:
         return score_in
 
-def P_De_given_HZc_log(N_o_jk, N_e_jk, priors):
 
+def P_De_given_HZc_log(N_o_jk, N_e_jk, priors):
     log_prob_marginal_joint = dirichlet_bayesian_score(N_o_jk + N_e_jk, priors)
     log_prob_marginal_obs = dirichlet_bayesian_score(N_o_jk, priors)
     log_prob_conditional_diff = log_prob_marginal_joint - log_prob_marginal_obs
 
     return log_prob_conditional_diff
+
 
 def P_De_given_HZc_bar_log(N_e_jk, priors):
     return dirichlet_bayesian_score(N_e_jk, priors)
@@ -252,11 +201,6 @@ def run_subset_pipeline(Do, De, X_col, Z_cols, Y_col, priors_val=1):
     df_results = pd.DataFrame(results)
     return df_results
 
-# Run it
-df_scores = run_subset_pipeline(Do, De, 'T', ['Z', 'C'], 'Y')
-
-print(df_scores.round(4))
-
 
 def compute_posterior_predictive_both_hypotheses(N_o_jk, N_o_j, N_e_jk, N_e_j, alpha_jk, alpha_j):
     """
@@ -278,16 +222,58 @@ def compute_posterior_predictive_both_hypotheses(N_o_jk, N_o_j, N_e_jk, N_e_j, a
 
     return probs_Y_HZc, probs_Y_HZc_bar, probs_Y_obs
 
+"""Inputs for simulate the data"""
+coefs = np.array([
+    [3.0, -3.0, 2.5],
+    [4.5, 4.5, -3.0],
+    [3.6, -1.5, 3.0]
+])
 
-results = []
+intercepts = np.array([0.2, -0.1, 0.3])  # shape (3,)
+
+coefs_GT = np.array([
+    [3.0, -3.0, 2.5],
+    [4.5, 4.5, -3.0],
+    [3.6, -1.5, 3.0]
+])
+
+intercepts_GT = np.array([0.2, -0.1, 0.3])
+
+No = 1000
+Ne = 50
+Ntest = 1000
+
+Do = simulate_multinomial_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
+De = simulate_multinomial_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
+De_test = simulate_multinomial_logit_exp(n_samples=Ntest, coefs=coefs, intercepts=intercepts)
+
+treatment = 'T'
+outcome = 'Y'
+covariate_with_T = [col for col in Do.columns if col != outcome]
+covariates_without_T = [col for col in Do.columns if col not in [outcome, treatment]]
+
+X_test = De_test[covariate_with_T]
+y_test = De_test[outcome]
+
+GT_log_loss = log_loss_GT(X_test, y_test, coefs_GT, intercepts_GT)
+
+
+Z_cols = covariate_with_T
+FS = Z_cols
+Y_col = outcome
+
+# Run it
+df_scores = run_subset_pipeline(Do, De, treatment, covariates_without_T, outcome)
+
+print(df_scores.round(4))
 
 tuple_subsets = df_scores.iloc[:, 0].tolist()
 subsets = [list(t) for t in tuple_subsets]
 
 for Z_cols in subsets:
     # Get counts for each Z config
-    Z_vals_Do, _, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, Z_cols, 'Y')
-    Z_vals_De, _, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, Z_cols, 'Y')
+    Z_vals_Do, _, N_o_j, N_o_jk, df_counts_o = get_counts_multiZ(Do, Z_cols, outcome)
+    Z_vals_De, _, N_e_j, N_e_jk, df_counts_e = get_counts_multiZ(De, Z_cols, outcome)
 
     # Priors
     alpha_jk = np.ones_like(N_o_jk)
@@ -323,10 +309,11 @@ for Z_cols in subsets:
 
     # Build dataframe
     df_Prob_Y_Hzc = pd.DataFrame(probs_rows_HZc, columns=[f"P_HZc(Y={k})" for k in range(probs_Y_HZc.shape[1])])
-    df_Prob_Y_Hzc_bar = pd.DataFrame(probs_rows_HZc_bar, columns=[f"P_HZc_bar(Y={k})" for k in range(probs_Y_HZc_bar.shape[1])])
+    df_Prob_Y_Hzc_bar = pd.DataFrame(probs_rows_HZc_bar,
+                                     columns=[f"P_HZc_bar(Y={k})" for k in range(probs_Y_HZc_bar.shape[1])])
     df_Prob_Y_obs = pd.DataFrame(probs_rows_obs, columns=[f"P_obs(Y={k})" for k in range(probs_Y_obs.shape[1])])
 
-    #posterior predictive probabilities* (P_Hzc/P_Hzc_bar)
+    # posterior predictive probabilities* (P_Hzc/P_Hzc_bar)
     # print('df_Prob_Hzc', df_Prob_Y_Hzc)
     # print('df_Prob_Hzc_bar', df_Prob_Y_Hzc_bar)
 
@@ -339,8 +326,7 @@ for Z_cols in subsets:
         P_Y_exp = df_Prob_Y_Hzc_bar.to_numpy()
         P_Y_obs = df_Prob_Y_obs.to_numpy()
 
-
-y_true = De_test['Y']
+y_true = De_test[outcome]
 
 alg_loss = log_loss(y_true, P_Y_alg)
 print(f"Log loss algorithm: {alg_loss}")
