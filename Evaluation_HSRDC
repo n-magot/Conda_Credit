@@ -1,0 +1,137 @@
+"""Draft code for Estimating the Expected Utility of Applying FindIMB to Make Treatment Decisions
+in a Patient Population"""
+import jax
+from jax import random
+import time
+from sklearn.linear_model import LogisticRegression
+from scipy.stats import bernoulli
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from itertools import combinations
+
+
+
+key = jax.random.PRNGKey(int(time.time()))
+
+
+def train_logistic_regression(X, y):
+    model = LogisticRegression()
+    # model = LogisticRegression(class_weight='balanced', random_state=None)
+
+    model.fit(X, y)
+
+    return model
+
+def model_specification(data, treatment_col, covariates, outcome_col):
+    # Filter the data for treatment group (T = 1)
+    X_treated_1 = data[data[treatment_col] == 1][[treatment_col] + covariates]
+    y_treated_1 = data[data[treatment_col] == 1][outcome_col]
+
+    # Filter the data for control group (T = 0)
+    X_treated_0 = data[data[treatment_col] == 0][[treatment_col] + covariates]
+    y_treated_0 = data[data[treatment_col] == 0][outcome_col]
+
+    # Train logistic regression models separately
+    model_treated_1 = train_logistic_regression(X_treated_1, y_treated_1)
+    model_treated_0 = train_logistic_regression(X_treated_0, y_treated_0)
+    print('coeffficients of model treated 0', model_treated_0.intercept_, model_treated_0.coef_)
+    print('coeffficients of model treated 1', model_treated_1.intercept_, model_treated_1.coef_)
+
+    return model_treated_0, model_treated_1
+
+def predictionY1givenT0(data_obs, data_exp, Test_data, P_HZ, P_HZC):
+    """In this function data will be all the available data without the test set.
+    In our final implementation data will be all the available dataset and test data will be
+    a set that we will generate using the function GenerateTestData(TrainingData: data; N: integer)
+    Test_data: contains a representative set of patient cases that each has just the values of pretreatment covariates.
+    data: contains all patient cases(except Test_data) that each has the values of pretreatment covariates,
+     the treatment and the outcome"""
+
+    data = pd.concat([data_obs, data_exp], axis=0, ignore_index=True)
+
+    N = Test_data.shape[0]
+    predictionY1givenT0 = 0
+    predictionY1givenT1 = 0
+
+    outcome_col = 'hosp_death_covid_28'
+    treatment_col = 'bamlanivimab_and_etesevimab'
+    covariates = [col for col in data.columns if col not in [outcome_col, treatment_col]]
+
+    X = data[[treatment_col] + covariates]
+    y = data[outcome_col]
+    model = train_logistic_regression(X, y)
+    print('coeffficients of model', model.intercept_, model.coef_)
+
+    # Include all subsets: from size 0 (empty set) to full set
+    all_subsets = []
+    for r in range(len(covariates) + 1):  # +1 includes the full set
+        subsets_r = combinations(covariates, r)
+        all_subsets.extend(subsets_r)
+
+    # Convert tuples to lists (optional)
+    all_subsets = [list(subset) for subset in all_subsets]
+
+    for j in range(len(all_subsets)):
+        covariates = all_subsets[j]
+
+        P_HZ = P_HZ[covariates]
+        P_HZC = P_HZC[covariates]
+        data = data[covariates]
+        data_exp = data_exp[covariates]
+
+        """Using data: Step 1: learn 2 LR models from the data, M1 and M0, to predict Y given treatment T=1,0 respectivelly
+            and pre-pretreatment covariates.
+            """
+        model_treated_0_alg, model_treated_1_alg = model_specification(data, treatment_col, covariates, outcome_col)
+        model_treated_0_exp, model_treated_1_exp = model_specification(data_exp, treatment_col, covariates, outcome_col)
+
+        """For datatest: Step 2: Let S’ be equal to the observational data with O removed. For each case in S’, assign to T
+        the value that according to M1 predicts the best outcome O in light of the covariates
+        in the case."""
+        X_except_T_cov = Test_data[covariates]
+
+        """Find the treatment value that minimizes P(O=1) (maximizes P(O=0)). In Prob_T0 assume patient treated
+        with T= 0 and prob_T1 with T=1 keeping all th other covariates"""
+        X_df_0 = pd.DataFrame(np.column_stack([np.zeros(len(X_except_T_cov)), X_except_T_cov]),
+                              columns=[treatment_col] + covariates)
+        X_df_1 = pd.DataFrame(np.column_stack([np.ones(len(X_except_T_cov)), X_except_T_cov]),
+                              columns=[treatment_col] + covariates)
+
+        prob_T0_alg = model_treated_0_alg.predict_proba(X_df_0)[:, 0]
+        prob_T1_alg = model_treated_1_alg.predict_proba(X_df_1)[:, 0]
+
+        prob_T0_exp = model_treated_0_exp.predict_proba(X_df_0)[:, 0]
+        prob_T1_exp = model_treated_1_exp.predict_proba(X_df_1)[:, 0]
+
+        predictionY1givenT0 = predictionY1givenT0 + prob_T0_alg*P_HZ + prob_T0_exp*P_HZC
+        predictionY1givenT1 = predictionY1givenT1 + prob_T1_alg*P_HZ + prob_T1_exp*P_HZC
+
+
+    T0Count = np.sum(predictionY1givenT0 > predictionY1givenT1)
+    print(f"Number of samples where prob_T0 > prob_T1: {T0Count}")
+    T1Count = np.sum(predictionY1givenT0 < predictionY1givenT1)
+    print(f"Number of samples where prob_T1 > prob_T0: {T1Count}")
+
+    """ Choose T=1 if it leads to a lower probability of O=1, otherwise T=0
+        Assign best_T = 1 with probability 'prob_assig_T' when prob_T1 > prob_T0"""
+    bernoulli_samples = np.random.binomial(1, 1, size=predictionY1givenT1.shape)
+
+    T_new = np.where(predictionY1givenT0 > predictionY1givenT1, 1 - bernoulli_samples, bernoulli_samples)
+    print('How many time the best treatment was the Treatment 1:', np.count_nonzero(T_new))
+
+    """Outcome for observational data"""
+    print('predictionY1givenT0', predictionY1givenT0)
+    print('predictionY1givenT1', predictionY1givenT1)
+
+    estimateY1 = np.where(predictionY1givenT0 > predictionY1givenT1, bernoulli.rvs(predictionY1givenT0),
+                          bernoulli.rvs(predictionY1givenT1))
+
+    sumY1 = np.count_nonzero(estimateY1 == 1)
+    avgY1 = sumY1 / N
+    print('how many 1 in labels_obs', np.count_nonzero(estimateY1 == 1))
+    print('Estimate of the fraction of patients who will have outcome Y=1 when given best'
+          ' predicted treatments:', avgY1)
+
+    return avgY1
