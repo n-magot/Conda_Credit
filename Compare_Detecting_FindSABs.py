@@ -72,80 +72,136 @@ def calculate_log_marginal(num_samples, samples, data, observed_data):
     return log_marginal_likelihood
 
 
-path = '/home/nandia/PycharmProjects/PythonProject/kernel-test-bias/src/data_dok.csv'
+path = '/home/nandia/PycharmProjects/PythonProject/kernel-test-bias/src/Hillstrom_data_constant_bias_mode_2.csv'
 
 def data_preds(path):
     df = pd.read_csv(path)
     return df
 
 df = data_preds(path)
-# Observational data where s == 1
-Do = df[df['s'] == 1].copy()
-# List of columns from x1 to x13
-x_cols = [f'x{i}' for i in range(1, 14)]
+# Example: list of 20 seeds
+seeds = list(range(1, 21))  # or use random.sample for arbitrary seeds
+all_SABs = []
+Ne_list = [500, 1000, 30000]
 
-# New DataFrame with 't' first, then x1 to x13
-data_obs = Do[['t'] + x_cols].copy()
-labels_obs = Do['y']
+for Ne in Ne_list:
+    num_SABs = 0
 
-# Experimental data where s == 0
-De = df[df['s'] == 0].copy()
-# New DataFrame with 't' first, then x1 to x13
-data_exp = De[['t'] + x_cols].copy()
-labels_exp = De['y']
+    for seed in seeds:
+        print(f"\nRunning with seed: {seed}")
+        np.random.seed(seed)
 
-data_obs = np.array(data_obs)
-labels_obs = np.array(labels_obs)
+        # Always use the original df for sampling
+        x_columns = [col for col in df.columns if col.startswith("x")]
+        x = df[x_columns].to_numpy()
+        s = df['s'].to_numpy()
+        y = df['y'].to_numpy()
+        t = df['t'].to_numpy()
 
-data_exp = np.array(data_exp)
-labels_exp = np.array(labels_exp)
+        idx_0 = np.where(s == 0)[0]
+        idx_1 = np.where(s == 1)[0]
+
+        np.random.shuffle(idx_0)
+        np.random.shuffle(idx_1)
+
+        No = 15000
+        idx_0 = idx_0[:Ne]
+        idx_1 = idx_1[:No]
+
+        idx_final = np.concatenate([idx_0, idx_1])
+        np.random.shuffle(idx_final)
+
+        x = x[idx_final]
+        y = y[idx_final]
+        t = t[idx_final]
+        s = s[idx_final]
+
+        num_features = x.shape[1]
+        x_columns = [f"x{i + 1}" for i in range(num_features)]
+
+        df_sub = pd.DataFrame(
+            data=np.hstack([x, y.reshape(-1, 1), t.reshape(-1, 1), s.reshape(-1, 1)]),
+            columns=x_columns + ["y", "t", "s"]
+        )
+
+        Do = df_sub[df_sub['s'] == 1].copy()
+        De = df_sub[df_sub['s'] == 0].copy()
 
 
+        # List of columns from x1 to x13
+        x_cols = [f'x{i}' for i in range(1, 14)]
 
-"""Let's assume that Z1 is a latent and that MB(Y)=(T,Z2)"""
-P_Hzc = {}
-P_Hz_not_c = {}
-P_HZ = {}
-P_HZC = {}
+        # New DataFrame with 't' first, then x1 to x13
+        data_obs = Do[['t'] + x_cols].copy()
+        labels_obs = Do['y']
 
-correct_IMB = 0
-num_samples = 1000
+        # New DataFrame with 't' first, then x1 to x13
+        data_exp = De[['t'] + x_cols].copy()
+        labels_exp = De['y']
 
-"""Searching in these subsets of MB"""
-subset_list = [tuple(range(14))]
+        data_obs = np.array(data_obs)
+        labels_obs = np.array(labels_obs)
 
-for set in subset_list:
-    reg_variables = set
-    sub_data = data_obs[:, reg_variables]
-    exp_sub_data = data_exp[:, reg_variables]
+        data_exp = np.array(data_exp)
+        labels_exp = np.array(labels_exp)
 
-    posterior_samples = sample_posterior(sub_data, labels_obs, num_samples)
+        print(len(data_obs))
+        print(len(data_exp))
 
-    prior_samples = sample_prior_linear(exp_sub_data, num_samples)
 
-    marginal = calculate_log_marginal(num_samples, prior_samples, exp_sub_data, labels_exp)
-    # print('Marginal {} from experimental sampling:'.format(reg_variables), marginal)
-    """P(De|Do, Hzc_)"""
-    P_Hz_not_c[reg_variables] = marginal
+        """Let's assume that Z1 is a latent and that MB(Y)=(T,Z2)"""
+        P_Hzc = {}
+        P_Hz_not_c = {}
+        P_HZ = {}
+        P_HZC = {}
 
-    marginal = calculate_log_marginal(num_samples, posterior_samples, exp_sub_data, labels_exp)
-    # print('Marginal {} from observational sampling:'.format(reg_variables), marginal)
-    """P(De|Do, Hzc)"""
-    P_Hzc[reg_variables] = marginal
+        correct_IMB = 0
+        num_samples = 1000
 
-    if P_Hzc[reg_variables] > P_Hz_not_c[reg_variables]:
-        print("CMB", reg_variables)
-        print('P_HZ', P_Hzc[reg_variables])
-        print('P_HZc', P_Hz_not_c[reg_variables])
+        """Searching in these subsets of MB"""
+        subset_list = [tuple(range(14))]
+        # subset_list = [(0,1,2,8,9,10,11,12)]
 
-        CMB = reg_variables
 
-    #logg sum exp trick instead of:  P_HZ[set] = math.exp(P_Hzc[set]) / (math.exp(P_Hzc[set]) + math.exp(P_Hz_not_c[set]))
-    diff = P_Hzc[set] - P_Hz_not_c[set]
-    from scipy.special import expit
+        for set in subset_list:
+            reg_variables = set
+            sub_data = data_obs[:, reg_variables]
+            exp_sub_data = data_exp[:, reg_variables]
 
-    P_HZ[set] = expit(diff)
+            posterior_samples = sample_posterior(sub_data, labels_obs, num_samples)
 
-    P_HZC[set] = 1 - P_HZ[set]
-    print('PHz for set', set, P_HZ[set])
-    print('PHzc for set', set, P_HZC[set])
+            prior_samples = sample_prior_linear(exp_sub_data, num_samples)
+
+            marginal = calculate_log_marginal(num_samples, prior_samples, exp_sub_data, labels_exp)
+            # print('Marginal {} from experimental sampling:'.format(reg_variables), marginal)
+            """P(De|Do, Hzc_)"""
+            P_Hz_not_c[reg_variables] = marginal
+
+            marginal = calculate_log_marginal(num_samples, posterior_samples, exp_sub_data, labels_exp)
+            # print('Marginal {} from observational sampling:'.format(reg_variables), marginal)
+            """P(De|Do, Hzc)"""
+            P_Hzc[reg_variables] = marginal
+
+            if P_Hzc[reg_variables] > P_Hz_not_c[reg_variables]:
+                print("CMB", reg_variables)
+                print('P_HZ', P_Hzc[reg_variables])
+                print('P_HZc', P_Hz_not_c[reg_variables])
+
+                CMB = reg_variables
+
+            #logg sum exp trick instead of:  P_HZ[set] = math.exp(P_Hzc[set]) / (math.exp(P_Hzc[set]) + math.exp(P_Hz_not_c[set]))
+            diff = P_Hzc[set] - P_Hz_not_c[set]
+            from scipy.special import expit
+
+            P_HZ[set] = expit(diff)
+
+            P_HZC[set] = 1 - P_HZ[set]
+            print('PHz for set', set, P_HZ[set])
+            print('PHzc for set', set, P_HZC[set])
+            if P_HZ[set] > P_HZC[set]:
+                num_SABs = num_SABs + 1
+    print('For Ne', Ne)
+    print('the numer of SABS', num_SABs)
+    all_SABs.append(num_SABs)
+
+print(all_SABs)
