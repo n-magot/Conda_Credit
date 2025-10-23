@@ -1,3 +1,5 @@
+"""Code creating the data to evaluate if the Python code produces the same results as Sofia's MATLAB code
+Applied only for binary variables"""
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
