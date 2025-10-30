@@ -25,7 +25,9 @@ def simulate_binary_logit_exp(n_samples, coefs, intercepts):
     T = np.random.randint(0, 2, size=(n_samples, 1))
     Z = np.random.randint(0, 2, size=(n_samples, 1))
     C = np.random.randint(0, 2, size=(n_samples, 1))
-    X = np.hstack((T, Z, C))
+    Z1 = np.random.randint(0, 2, size=(n_samples, 1))
+    Z2 = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((T, Z, C, Z1, Z2))
 
     # Compute logits (linear combination)
     logits = X @ coefs + intercepts  # shape (n_samples,)
@@ -35,7 +37,7 @@ def simulate_binary_logit_exp(n_samples, coefs, intercepts):
     Y = np.random.binomial(1, probs)
 
     # Combine into DataFrame
-    df = pd.DataFrame(X, columns=['T', 'Z', 'C'])
+    df = pd.DataFrame(X, columns=['T', 'Z', 'C', 'Z1', 'Z2'])
     df['Y'] = Y
 
     return df
@@ -49,7 +51,9 @@ def simulate_binary_logit_obs(n_samples, coefs, intercepts):
     # Simulate 2 binary covariates
     Z = np.random.randint(0, 2, size=(n_samples, 1))
     C = np.random.randint(0, 2, size=(n_samples, 1))
-    X = np.hstack((Z, C))
+    Z1 = np.random.randint(0, 2, size=(n_samples, 1))
+    Z2 = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((Z, C, Z1, Z2))
 
     # Treatment assignment depends on one covariate
     logit_T = 3.8 * X[:, 1]
@@ -67,22 +71,22 @@ def simulate_binary_logit_obs(n_samples, coefs, intercepts):
     Y = np.random.binomial(1, probs)
 
     # Create DataFrame
-    df = pd.DataFrame(X_new, columns=['T', 'Z', 'C'])
+    df = pd.DataFrame(X_new, columns=['T', 'Z', 'C', 'Z1', 'Z2'])
     df['Y'] = Y
 
     return df
 
 # Binary outcome: coefficients for features [T, Z, C]
-coefs = np.array([3.0, -3.0, 2.5])       # shape (3,)
+coefs = np.array([3.0, -3.0, 2.5, 1.5, 0.2])       # shape (3,)
 intercepts = 0.2                           # scalar
 
 # Ground-truth coefficients for evaluation
-coefs_GT = np.array([3.0, -3.0, 2.5])    # shape (3,)
+coefs_GT = np.array([3.0, -3.0, 2.5, 0.5, 0.2])    # shape (3,)
 intercepts_GT = 0.2                        # scalar
 
 
-No = 1000
-Ne = 500
+No = 10000
+Ne = 300
 
 Do = simulate_binary_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
 De_all = simulate_binary_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
@@ -180,23 +184,31 @@ def compute_posterior_predictive_both_hypotheses(N_o_jk, N_o_j, N_e_jk, N_e_j, a
     return probs_Y_HZc, probs_Y_HZc_bar, probs_Y_obs
 
 
-def compute_posterior_predictive_single(N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j, alpha_jk, alpha_j):
+def compute_posterior_predictive_single(N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j):
     """
     Returns:
     - probs_HZc: P(Y|do(X), Z, HZc) predictive probs under H_Z^c
     - probs_HZc_bar: P(Y|do(X), Z, HZc_bar) predictive probs under H̄_Z^c
     """
+    alpha_o_jk = np.ones_like(N_o_jk)
+    alpha_o_j = np.sum(alpha_o_jk, axis=1)
 
-    numerator_HZc_bar = N_e_jk + alpha_jk
-    denominator_HZc_bar = (N_e_j + alpha_j)[:, np.newaxis]
+    alpha_e_jk = np.ones_like(N_e_jk)
+    alpha_e_j = np.sum(alpha_e_jk, axis=1)
+
+    alpha_o_e_jk = np.ones_like(N_o_e_jk)
+    alpha_o_e_j = np.sum(alpha_o_e_jk, axis=1)
+
+    numerator_HZc_bar = N_e_jk + alpha_e_jk
+    denominator_HZc_bar = (N_e_j + alpha_e_j)[:, np.newaxis]
     probs_Y_HZc_bar = numerator_HZc_bar / denominator_HZc_bar
 
-    numerator_obs = N_o_jk + alpha_jk
-    denominator_obs = (N_o_j + alpha_j)[:, np.newaxis]
+    numerator_obs = N_o_jk + alpha_o_jk
+    denominator_obs = (N_o_j + alpha_o_j)[:, np.newaxis]
     probs_Y_obs = numerator_obs / denominator_obs
 
-    numerator_all = N_o_e_jk + alpha_jk
-    denominator_all = (N_o_e_j + alpha_j)[:, np.newaxis]
+    numerator_all = N_o_e_jk + alpha_o_e_jk
+    denominator_all = (N_o_e_j + alpha_o_e_j)[:, np.newaxis]
     probs_Y_all = numerator_all / denominator_all
 
     return probs_Y_HZc_bar, probs_Y_obs, probs_Y_all
@@ -310,11 +322,9 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
 
         Z_vals_Do_De, _, N_o_e_j, N_o_e_jk, _ = get_counts_multiZ(Do_De, list(best_set_Do_De), outcome, Z_reference=Z_reference)
 
-        alpha_jk = np.ones_like(N_o_jk)
-        alpha_j = np.sum(alpha_jk, axis=1)
 
         probs_Y_exp, probs_Y_obs, probs_Y_all = compute_posterior_predictive_single(
-            N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j, alpha_jk, alpha_j
+            N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j
         )
 
         probs_rows_exp, probs_rows_obs, probs_rows_all = [], [], []
@@ -663,11 +673,9 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
 
     Z_vals_Do_De, _, N_o_e_j, N_o_e_jk, _ = get_counts_multiZ(Do_De, list(best_set_Do_De), outcome, Z_reference=Z_reference)
 
-    alpha_jk = np.ones_like(N_o_jk)
-    alpha_j = np.sum(alpha_jk, axis=1)
 
     probs_Y_exp, probs_Y_obs, probs_Y_all = compute_posterior_predictive_single(
-        N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j, alpha_jk, alpha_j
+        N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j
     )
 
     probs_rows_exp, probs_rows_obs, probs_rows_all = [], [], []
