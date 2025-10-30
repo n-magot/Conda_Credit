@@ -4,8 +4,89 @@ import numpy as np
 import pandas as pd
 from scipy.special import logsumexp, gammaln
 from sklearn.metrics import log_loss
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
+
+
+def simulate_binary_logit_exp(n_samples, coefs, intercepts):
+    """
+    Simulates data for a binary logistic regression model.
+
+    Parameters:
+        n_samples (int): Number of samples to simulate.
+        coefs (np.ndarray): Coefficients for each feature (shape: [num_features]).
+        intercepts (float): Intercept term.
+
+    Returns:
+        df: DataFrame with features T, Z, C and binary label Y.
+    """
+    np.random.seed(42)
+
+    # Simulate 3 binary features: T, Z, C
+    T = np.random.randint(0, 2, size=(n_samples, 1))
+    Z = np.random.randint(0, 2, size=(n_samples, 1))
+    C = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((T, Z, C))
+
+    # Compute logits (linear combination)
+    logits = X @ coefs + intercepts  # shape (n_samples,)
+    probs = 1 / (1 + np.exp(-logits))  # sigmoid
+
+    # Sample Y ~ Bernoulli(probs)
+    Y = np.random.binomial(1, probs)
+
+    # Combine into DataFrame
+    df = pd.DataFrame(X, columns=['T', 'Z', 'C'])
+    df['Y'] = Y
+
+    return df
+
+def simulate_binary_logit_obs(n_samples, coefs, intercepts):
+    """
+    Simulate observational data for a binary outcome, where treatment depends on covariates.
+    """
+    np.random.seed(42)
+
+    # Simulate 2 binary covariates
+    Z = np.random.randint(0, 2, size=(n_samples, 1))
+    C = np.random.randint(0, 2, size=(n_samples, 1))
+    X = np.hstack((Z, C))
+
+    # Treatment assignment depends on one covariate
+    logit_T = 3.8 * X[:, 1]
+    prob_T = 1 / (1 + np.exp(-logit_T))
+    T = np.random.binomial(1, prob_T.flatten()).reshape(-1, 1)
+
+    # Combine T with covariates
+    X_new = np.hstack((T, X))  # columns: T, Z, C
+
+    # Compute logits and probabilities for Y
+    logits = X_new @ coefs + intercepts  # shape (n_samples,)
+    probs = 1 / (1 + np.exp(-logits))
+
+    # Sample Y ~ Bernoulli(probs)
+    Y = np.random.binomial(1, probs)
+
+    # Create DataFrame
+    df = pd.DataFrame(X_new, columns=['T', 'Z', 'C'])
+    df['Y'] = Y
+
+    return df
+
+# Binary outcome: coefficients for features [T, Z, C]
+coefs = np.array([3.0, -3.0, 2.5])       # shape (3,)
+intercepts = 0.2                           # scalar
+
+# Ground-truth coefficients for evaluation
+coefs_GT = np.array([3.0, -3.0, 2.5])    # shape (3,)
+intercepts_GT = 0.2                        # scalar
+
+
+No = 1000
+Ne = 500
+
+Do = simulate_binary_logit_obs(n_samples=No, coefs=coefs, intercepts=intercepts)
+De_all = simulate_binary_logit_exp(n_samples=Ne, coefs=coefs, intercepts=intercepts)
+
 
 def get_counts_multiZ(df, Z_cols, Y_col, Z_reference=None):
     df = df.copy()
@@ -46,7 +127,6 @@ def get_counts_multiZ(df, Z_cols, Y_col, Z_reference=None):
     df_counts["Total"] = N_j
 
     return Z_values, Y_values, N_j, N_jk, df_counts
-
 
 
 def dirichlet_bayesian_score(counts, priors=None):
@@ -114,36 +194,26 @@ def compute_posterior_predictive_single(N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, 
     numerator_obs = N_o_jk + alpha_jk
     denominator_obs = (N_o_j + alpha_j)[:, np.newaxis]
     probs_Y_obs = numerator_obs / denominator_obs
-    
+
     numerator_all = N_o_e_jk + alpha_jk
     denominator_all = (N_o_e_j + alpha_j)[:, np.newaxis]
     probs_Y_all = numerator_all / denominator_all
 
     return probs_Y_HZc_bar, probs_Y_obs, probs_Y_all
 
-# ============================================================
-# Dirichlet-Multinomial provider
-# ============================================================
 
-def dirichlet_prob_provider(Test_data, probs_matrix):
-    """
-    probs_matrix: shape (N, 2), row-aligned with Test_data
-    """
-    probs_T0 = probs_matrix[:, 0]
-    probs_T1 = probs_matrix[:, 1]
-    return probs_T0, probs_T1
-
-def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, outcome, best_set_De, best_set_Do, best_set_Do_De):
+def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, outcome, best_set_De, best_set_Do,
+                              best_set_Do_De):
     """
     Vectorized evaluation of expected outcome under optimal treatment for each row.
-    
+
     Returns:
       avgY1_obs, avgY1_exp, avgY1_alg
     """
     Do_De = pd.concat([Do, De], ignore_index=True)
 
     N = len(De_test)
-    K = 2 # For binary outcomes
+    K = 2  # For binary outcomes
 
     # Prepare T0 and T1 datasets
     Dtest_T0 = De_test.copy()
@@ -151,18 +221,15 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
     Dtest_T1 = De_test.copy()
     Dtest_T1[treatment] = 1
 
-    # Storage for probabilities
+    # Posterior expectation in the test experimental dataset using FindIMB algorithm
     def compute_BMA_probs(De_input):
         P_Y_alg_accum = np.zeros((N, K))
-        P_Y_exp = None
-        P_Y_obs = None
 
         for Z_cols in subsets:
             Z_cols_list = list(Z_cols)
             w_c = float(df_scores.loc[df_scores['Variables'] == tuple(Z_cols), 'P_HZ_c'])
             w_cb = float(df_scores.loc[df_scores['Variables'] == tuple(Z_cols), 'P_HZ_c_bar'])
-            
-                
+
             # Build a universal Z_reference across both datasets
             Z_categories = []
             for col in Z_cols:
@@ -170,7 +237,7 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
                 cats_De = De[col].astype('category').cat.categories
                 all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
                 Z_categories.append(all_cats)
-            
+
             Z_reference = list(itertools.product(*Z_categories))
 
             Z_vals_Do, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, Z_cols, outcome, Z_reference=Z_reference)
@@ -184,7 +251,7 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
             )
 
             Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_De)}
-            probs_rows_HZc, probs_rows_HZc_bar, probs_rows_obs_tmp = [], [], []
+            probs_rows_HZc, probs_rows_HZc_bar = [], []
 
             for _, row in De_input.iterrows():
                 z_tuple = tuple(row[col] for col in Z_cols_list)
@@ -192,57 +259,112 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
                 if idx is not None:
                     probs_rows_HZc.append(probs_Y_HZc[idx])
                     probs_rows_HZc_bar.append(probs_Y_HZc_bar[idx])
-                    probs_rows_obs_tmp.append(probs_Y_obs_tmp[idx])
                 else:
                     probs_rows_HZc.append(np.ones(K) / K)
                     probs_rows_HZc_bar.append(np.ones(K) / K)
-                    probs_rows_obs_tmp.append(np.ones(K) / K)
 
             probs_rows_HZc = np.asarray(probs_rows_HZc)
             probs_rows_HZc_bar = np.asarray(probs_rows_HZc_bar)
-            probs_rows_obs_tmp = np.asarray(probs_rows_obs_tmp)
 
             # BMA accumulation
             P_Y_alg_accum += w_c * probs_rows_HZc + w_cb * probs_rows_HZc_bar
-            
-
 
         P_Y_alg = P_Y_alg_accum / np.clip(P_Y_alg_accum.sum(axis=1, keepdims=True), 1e-12, None)
-        
+
+        return P_Y_alg
+
+    # Posterior expectation in the test experimental dataset using Do only, De only or (Do+De) only
+    def posterior_predictives_opt(De_input):
+
+        # Build a universal Z_reference across both datasets
+        Z_categories = []
+        for col in best_set_Do:
+            cats_Do = Do[col].astype('category').cat.categories
+            cats_De = De[col].astype('category').cat.categories
+            all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+            Z_categories.append(all_cats)
+
+        Z_reference = list(itertools.product(*Z_categories))
+
         Z_vals_Do, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, list(best_set_Do), outcome, Z_reference=Z_reference)
+
+        Z_categories = []
+        for col in best_set_De:
+            cats_Do = Do[col].astype('category').cat.categories
+            cats_De = De[col].astype('category').cat.categories
+            all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+            Z_categories.append(all_cats)
+
+        Z_reference = list(itertools.product(*Z_categories))
+
         Z_vals_De, _, N_e_j, N_e_jk, _ = get_counts_multiZ(De, list(best_set_De), outcome, Z_reference=Z_reference)
+
+        Z_categories = []
+        for col in best_set_Do_De:
+            cats_Do = Do[col].astype('category').cat.categories
+            cats_De = De[col].astype('category').cat.categories
+            all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+            Z_categories.append(all_cats)
+
+        Z_reference = list(itertools.product(*Z_categories))
+
         Z_vals_Do_De, _, N_o_e_j, N_o_e_jk, _ = get_counts_multiZ(Do_De, list(best_set_Do_De), outcome, Z_reference=Z_reference)
 
         alpha_jk = np.ones_like(N_o_jk)
         alpha_j = np.sum(alpha_jk, axis=1)
 
-        probs_Y_HZc_bar, probs_Y_obs_tmp, probs_Y_all = compute_posterior_predictive_single(
+        probs_Y_exp, probs_Y_obs, probs_Y_all = compute_posterior_predictive_single(
             N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j, alpha_jk, alpha_j
         )
-        
-        probs_rows_HZc_bar = np.asarray(probs_rows_HZc_bar)
-        probs_rows_obs_tmp = np.asarray(probs_rows_obs_tmp)
-        probs_Y_all = np.asarray(probs_Y_all)
-        
-        P_Y_exp = probs_rows_HZc_bar        
-        P_Y_obs = probs_rows_obs_tmp
-        P_Y_all = probs_Y_all
-        
-        
-        return P_Y_alg, P_Y_exp, P_Y_obs, P_Y_all
 
-    # Compute BMA probabilities for T0 and T1
-    P_Y_alg_T0, P_Y_exp_T0, P_Y_obs_T0, P_Y_all_T0 = compute_BMA_probs(Dtest_T0)
+        probs_rows_exp, probs_rows_obs, probs_rows_all = [], [], []
 
-    P_Y_alg_T1, P_Y_exp_T1, P_Y_obs_T1, P_Y_all_T1 = compute_BMA_probs(Dtest_T1)
+        Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_De)}
+        for _, row in De_input.iterrows():
+            z_tuple = tuple(row[col] for col in best_set_De)
+            idx = Z_config_to_index.get(z_tuple)
+            if idx is not None:
+                probs_rows_exp.append(probs_Y_exp[idx])
+            else:
+                probs_rows_exp.append(np.ones(K) / K)
+
+        Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_Do)}
+        for _, row in De_input.iterrows():
+            z_tuple = tuple(row[col] for col in best_set_Do)
+            idx = Z_config_to_index.get(z_tuple)
+            if idx is not None:
+                probs_rows_obs.append(probs_Y_obs[idx])
+            else:
+                probs_rows_obs.append(np.ones(K) / K)
+
+        Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_Do_De)}
+        for _, row in De_input.iterrows():
+            z_tuple = tuple(row[col] for col in best_set_Do_De)
+            idx = Z_config_to_index.get(z_tuple)
+            if idx is not None:
+                probs_rows_all.append(probs_Y_all[idx])
+            else:
+                probs_rows_all.append(np.ones(K) / K)
+
+        probs_rows_exp = np.asarray(probs_rows_exp)
+        probs_rows_obs = np.asarray(probs_rows_obs)
+        probs_rows_all = np.asarray(probs_rows_all)
+
+        return probs_rows_exp, probs_rows_obs, probs_rows_all
+
+    # Probabilities for T0 and T1
+    P_Y_alg_T0 = compute_BMA_probs(Dtest_T0)
+    P_Y_alg_T1 = compute_BMA_probs(Dtest_T1)
+    P_Y_exp_T0, P_Y_obs_T0, P_Y_all_T0 = posterior_predictives_opt(Dtest_T0)
+    P_Y_exp_T1, P_Y_obs_T1, P_Y_all_T1 = posterior_predictives_opt(Dtest_T1)
 
     # Determine optimal treatment for each row (vectorized), considering good outcome Y=0
     def best_treatment_probs(P_T0, P_T1):
         best_T = (P_T1[:, 0] > P_T0[:, 0]).astype(int)
-        
+
         """If best_T is always 1"""
         # best_T = np.ones(P_T1.shape[0], dtype=int)
-        
+
         best_probs = np.where(best_T[:, None] == 1, P_T1, P_T0)
         avgY0 = best_probs[:, 0].mean()
         T0Count = int(np.sum(best_T == 0))
@@ -254,8 +376,7 @@ def evaluate_expected_outcome(De_test, Do, De, df_scores, subsets, treatment, ou
     T0_obs, T1_obs, avgY1_obs = best_treatment_probs(P_Y_obs_T0, P_Y_obs_T1)
     T0_all, T1_all, avgY1_all = best_treatment_probs(P_Y_all_T0, P_Y_all_T1)
 
-
-    return T0_obs, T1_obs, avgY1_obs, T0_exp, T1_exp, avgY1_exp,  T0_alg, T1_alg, avgY1_alg, T0_all, T1_all, avgY1_all
+    return T0_obs, T1_obs, avgY1_obs, T0_exp, T1_exp, avgY1_exp, T0_alg, T1_alg, avgY1_alg, T0_all, T1_all, avgY1_all
 
 
 def expected_calibration_error(y_true, y_prob, n_bins=10):
@@ -267,7 +388,7 @@ def expected_calibration_error(y_true, y_prob, n_bins=10):
     ece = 0.0
 
     for i in range(n_bins):
-        mask = (y_prob >= bins[i]) & (y_prob < bins[i+1])
+        mask = (y_prob >= bins[i]) & (y_prob < bins[i + 1])
         bin_size = np.sum(mask)
         if bin_size > 0:
             acc = np.mean(y_true[mask])
@@ -286,10 +407,12 @@ def COMB_names(elements, k):
     return [(treatment,) + c for c in combos]
 
 
-def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, priors_val=1):
+def greedy_search_FindIMB(Do, De, X_col, Z_cols, Y_col, threshold=0.1, priors_val=1):
     """
     Layered subset search with pruning, using log-space normalization.
     Returns df_results with the same schema as the exhaustive pipeline.
+    This is the pipeline for greedy search strategy used in FindIMB,
+    with scoring function the normalized P(De|Do, Hz).
     """
     FS_vars = [X_col] + Z_cols
     N = len(FS_vars) - 1
@@ -297,7 +420,7 @@ def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, prio
 
     log_P_HZc = {}
     log_P_HZc_bar = {}
-    
+
     # Build a universal Z_reference across both datasets
     Z_categories = []
     for col in FS_vars:
@@ -305,10 +428,9 @@ def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, prio
         cats_De = De[col].astype('category').cat.categories
         all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
         Z_categories.append(all_cats)
-    
+
     Z_reference = list(itertools.product(*Z_categories))
 
-    
     _, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, FS_vars, Y_col, Z_reference=Z_reference)
     _, _, N_e_j, N_e_jk, _ = get_counts_multiZ(De, FS_vars, Y_col, Z_reference=Z_reference)
     alpha_jk = np.ones_like(N_o_jk) * priors_val
@@ -327,7 +449,7 @@ def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, prio
         for Z_subset in next_layer:
             if Z_subset in log_P_HZc:
                 continue
-            
+
             # Build a universal Z_reference across both datasets
             Z_categories = []
             for col in list(Z_subset):
@@ -335,7 +457,7 @@ def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, prio
                 cats_De = De[col].astype('category').cat.categories
                 all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
                 Z_categories.append(all_cats)
-            
+
             Z_reference = list(itertools.product(*Z_categories))
 
             _, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, list(Z_subset), Y_col, Z_reference=Z_reference)
@@ -374,10 +496,12 @@ def run_layered_pipeline_names(Do, De, X_col, Z_cols, Y_col, threshold=0.1, prio
     return df_results
 
 
-def run_layered_pipeline_marginal(data, X_col, Z_cols, Y_col, threshold=0.1, priors_val=1):
+def greedy_search_single_dataset(data, X_col, Z_cols, Y_col, threshold=0.1, priors_val=1):
     """
     Layered subset search to compute P(data | Z) for any dataset.
-    Works for either experimental (De) or observational (Do) data.
+    Works for either experimental (De) or observational (Do) data or (Do+De).
+    This is the pipeline for greedy search strategy used in Do, De, (Do+De)-based estimators,
+    with scoring function the normalized P(Do|Z), P(De|Z) and P(De+Do|Z) respectively.
     """
 
     FS_vars = [X_col] + Z_cols
@@ -445,7 +569,6 @@ def run_layered_pipeline_marginal(data, X_col, Z_cols, Y_col, threshold=0.1, pri
     return df_results
 
 
-
 def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, best_set_De, best_set_Do, best_set_Do_De):
     """
     Perform BMA over subsets and evaluate the metrics using the new expected utility function.
@@ -456,8 +579,6 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
     Ntest = len(De_test)
     K = 2
     P_Y_alg_accum = np.zeros((Ntest, K))
-    P_Y_exp = None
-    P_Y_obs = None
 
     # Keep track of subsets for expected outcome evaluation
     subsets = [list(t) for t in df_scores['Variables']]
@@ -467,8 +588,7 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
         Z_cols = list(row['Variables'])
         w_c = float(row['P_HZ_c'])
         w_cb = float(row['P_HZ_c_bar'])
-        
-            
+
         # Build a universal Z_reference across both datasets
         Z_categories = []
         for col in Z_cols:
@@ -476,9 +596,8 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
             cats_De = De[col].astype('category').cat.categories
             all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
             Z_categories.append(all_cats)
-        
+
         Z_reference = list(itertools.product(*Z_categories))
-        
 
         Z_vals_Do, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, Z_cols, outcome, Z_reference=Z_reference)
         Z_vals_De, _, N_e_j, N_e_jk, _ = get_counts_multiZ(De, Z_cols, outcome, Z_reference=Z_reference)
@@ -491,7 +610,7 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
         )
 
         Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_De)}
-        probs_rows_HZc, probs_rows_HZc_bar, probs_rows_obs_tmp = [], [], []
+        probs_rows_HZc, probs_rows_HZc_bar = [], []
 
         for _, rtest in De_test.iterrows():
             z_tuple = tuple(rtest[col] for col in Z_cols)
@@ -499,43 +618,95 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
             if idx is not None:
                 probs_rows_HZc.append(probs_Y_HZc[idx])
                 probs_rows_HZc_bar.append(probs_Y_HZc_bar[idx])
-                probs_rows_obs_tmp.append(probs_Y_obs_tmp[idx])
             else:
                 probs_rows_HZc.append(np.ones(K) / K)
                 probs_rows_HZc_bar.append(np.ones(K) / K)
-                probs_rows_obs_tmp.append(np.ones(K) / K)
 
         probs_rows_HZc = np.asarray(probs_rows_HZc)
         probs_rows_HZc_bar = np.asarray(probs_rows_HZc_bar)
-        probs_rows_obs_tmp = np.asarray(probs_rows_obs_tmp)
 
         P_Y_alg_accum += w_c * probs_rows_HZc + w_cb * probs_rows_HZc_bar
-
     # Normalize BMA
     P_Y_alg = P_Y_alg_accum / np.clip(P_Y_alg_accum.sum(axis=1, keepdims=True), 1e-12, None)
-    
-    Z_vals_Do, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, list(best_set_Do), outcome, Z_reference=Z_reference)
-    Z_vals_De, _, N_e_j, N_e_jk, _ = get_counts_multiZ(De, list(best_set_De), outcome, Z_reference=Z_reference)
-    Z_vals_Do_De, _, N_o_e_j, N_o_e_jk, _ = get_counts_multiZ(Do_De, list(best_set_Do_De), outcome, Z_reference=Z_reference)
 
+    # Build a universal Z_reference across both datasets
+    Z_categories = []
+    for col in best_set_Do:
+        cats_Do = Do[col].astype('category').cat.categories
+        cats_De = De[col].astype('category').cat.categories
+        all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+        Z_categories.append(all_cats)
+
+    Z_reference = list(itertools.product(*Z_categories))
+
+    Z_vals_Do, _, N_o_j, N_o_jk, _ = get_counts_multiZ(Do, list(best_set_Do), outcome, Z_reference=Z_reference)
+
+    Z_categories = []
+    for col in best_set_De:
+        cats_Do = Do[col].astype('category').cat.categories
+        cats_De = De[col].astype('category').cat.categories
+        all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+        Z_categories.append(all_cats)
+
+    Z_reference = list(itertools.product(*Z_categories))
+
+    Z_vals_De, _, N_e_j, N_e_jk, _ = get_counts_multiZ(De, list(best_set_De), outcome, Z_reference=Z_reference)
+
+    Z_categories = []
+    for col in best_set_Do_De:
+        cats_Do = Do[col].astype('category').cat.categories
+        cats_De = De[col].astype('category').cat.categories
+        all_cats = sorted(set(cats_Do) | set(cats_De))  # union of both
+        Z_categories.append(all_cats)
+
+    Z_reference = list(itertools.product(*Z_categories))
+
+    Z_vals_Do_De, _, N_o_e_j, N_o_e_jk, _ = get_counts_multiZ(Do_De, list(best_set_Do_De), outcome, Z_reference=Z_reference)
 
     alpha_jk = np.ones_like(N_o_jk)
     alpha_j = np.sum(alpha_jk, axis=1)
 
-    probs_Y_HZc_bar, probs_Y_obs_tmp, probs_Y_all = compute_posterior_predictive_single(
+    probs_Y_exp, probs_Y_obs, probs_Y_all = compute_posterior_predictive_single(
         N_o_jk, N_o_j, N_e_jk, N_e_j, N_o_e_jk, N_o_e_j, alpha_jk, alpha_j
     )
-    
-    probs_rows_HZc_bar = np.asarray(probs_rows_HZc_bar)
-    probs_rows_obs_tmp = np.asarray(probs_rows_obs_tmp)
-    probs_Y_all = np.asarray(probs_Y_all)
-    
-    P_Y_exp = probs_rows_HZc_bar    
-    P_Y_obs = probs_rows_obs_tmp   
-    P_Y_all = probs_Y_all
+
+    probs_rows_exp, probs_rows_obs, probs_rows_all = [], [], []
+
+    Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_De)}
+    for _, row in De_test.iterrows():
+        z_tuple = tuple(row[col] for col in best_set_De)
+        idx = Z_config_to_index.get(z_tuple)
+        if idx is not None:
+            probs_rows_exp.append(probs_Y_exp[idx])
+        else:
+            probs_rows_exp.append(np.ones(K) / K)
+
+    Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_Do)}
+    for _, row in De_test.iterrows():
+        z_tuple = tuple(row[col] for col in best_set_Do)
+        idx = Z_config_to_index.get(z_tuple)
+        if idx is not None:
+            probs_rows_obs.append(probs_Y_obs[idx])
+        else:
+            probs_rows_obs.append(np.ones(K) / K)
+
+    Z_config_to_index = {tuple(z): i for i, z in enumerate(Z_vals_Do_De)}
+    for _, row in De_test.iterrows():
+        z_tuple = tuple(row[col] for col in best_set_Do_De)
+        idx = Z_config_to_index.get(z_tuple)
+        if idx is not None:
+            probs_rows_all.append(probs_Y_all[idx])
+        else:
+            probs_rows_all.append(np.ones(K) / K)
+
+
+    P_Y_exp = np.asarray(probs_rows_exp)
+    P_Y_obs = np.asarray(probs_rows_obs)
+    P_Y_all = np.asarray(probs_rows_all)
+
 
     # Evaluate expected outcomes using the new function
-    T0_obs, T1_obs, avgY1_obs, T0_exp, T1_exp, avgY1_exp,  T0_alg, T1_alg, avgY1_alg, T0_all, T1_all, avgY1_all = evaluate_expected_outcome(
+    T0_obs, T1_obs, avgY1_obs, T0_exp, T1_exp, avgY1_exp, T0_alg, T1_alg, avgY1_alg, T0_all, T1_all, avgY1_all = evaluate_expected_outcome(
         De_test=De_test,
         Do=Do,
         De=De,
@@ -543,9 +714,9 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
         subsets=subsets,
         treatment=treatment,
         outcome=outcome,
-        best_set_De = best_set_De,
-        best_set_Do = best_set_Do,
-        best_set_Do_De = best_set_Do_De
+        best_set_De=best_set_De,
+        best_set_Do=best_set_Do,
+        best_set_Do_De=best_set_Do_De
     )
 
     # Log-loss
@@ -572,7 +743,8 @@ def bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, bes
 
     return metrics
 
-n_runs = 2
+
+n_runs = 1
 
 list_Expected_alg = []
 list_Expected_exp = []
@@ -599,9 +771,6 @@ list_ece_exp = []
 list_ece_obs = []
 list_ece_all = []
 
-Do = pre_pross_data(obs_data)
-De_all = pre_pross_data(exp_data)
-
 treatment = 'T'
 outcome = 'Y'
 covariate_with_T = [col for col in Do.columns if col != outcome]
@@ -609,7 +778,7 @@ covariates_without_T = [col for col in Do.columns if col not in [outcome, treatm
 # Z_cols = covariate_with_T
 
 
-df_Score_Do = run_layered_pipeline_marginal(Do, treatment, covariates_without_T, outcome, threshold=0.1)
+df_Score_Do = greedy_search_single_dataset(Do, treatment, covariates_without_T, outcome, threshold=0.1)
 print(df_Score_Do)
 
 # df_results is the output of your function
@@ -622,42 +791,40 @@ print("Best subset in Do:", best_set_Do)
 print("Probability for the best subset in Do:", best_prob)
 
 for k in range(n_runs):
-
     De, De_test = train_test_split(De_all, test_size=0.3, random_state=k)
-    
+
     Do_De = pd.concat([Do, De], ignore_index=True)
-    
+
     X_test = De_test[covariate_with_T]
     y_test = De_test[outcome]
-    
-    df_Score_De = run_layered_pipeline_marginal(De, treatment, covariates_without_T, outcome, threshold=0.1)
+
+    df_Score_De = greedy_search_single_dataset(De, treatment, covariates_without_T, outcome, threshold=0.1)
     print(df_Score_De)
-    
+
     max_row_De = df_Score_De.loc[df_Score_De['P(data|Z)'].idxmax()]
     best_set_De = max_row_De['Variables']
     best_prob = max_row_De['P(data|Z)']
-    
+
     print("Best subset in De:", best_set_De)
     print("Probability for the best subset in De:", best_prob)
-    
-    df_Score_Do_De = run_layered_pipeline_marginal(Do_De, treatment, covariates_without_T, outcome, threshold=0.1)
+
+    df_Score_Do_De = greedy_search_single_dataset(Do_De, treatment, covariates_without_T, outcome, threshold=0.1)
     print(df_Score_Do_De)
-    
+
     max_row_Do_De = df_Score_Do_De.loc[df_Score_Do_De['P(data|Z)'].idxmax()]
     best_set_Do_De = max_row_Do_De['Variables']
     best_prob = max_row_Do_De['P(data|Z)']
-    
+
     print("Best subset in (Do + De):", best_set_Do_De)
     print("Probability for the best subset in (Do + De):", best_prob)
-    
-    
+
     # 1) Run layered search (or exhaustive in the older FindIMB version)
-    df_scores = run_layered_pipeline_names(Do, De, treatment, covariates_without_T, outcome, threshold=0.1)
+    df_scores = greedy_search_FindIMB(Do, De, treatment, covariates_without_T, outcome, threshold=0.1)
     print(df_scores)
-    
-    
+
     # 2) Do Bayesian model averaging across subsets and evaluate
-    metrics = bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, best_set_De, best_set_Do, best_set_Do_De)
+    metrics = bma_predict_and_evaluate(Do, De, De_test, df_scores, treatment, outcome, best_set_De, best_set_Do,
+                                       best_set_Do_De)
 
     list_Expected_alg.append(metrics['algorithm']['avgY1'])
     list_Expected_exp.append(metrics['experimental']['avgY1'])
@@ -673,7 +840,7 @@ for k in range(n_runs):
     list_T1_exp.append(metrics['experimental']['T1'])
     list_T1_obs.append(metrics['observational']['T1'])
     list_T1_all.append(metrics['all']['T1'])
-    
+
     list_log_alg.append(metrics['algorithm']['logloss'])
     list_log_exp.append(metrics['experimental']['logloss'])
     list_log_obs.append(metrics['observational']['logloss'])
@@ -684,9 +851,8 @@ for k in range(n_runs):
     list_ece_obs.append(metrics['observational']['ece'])
     list_ece_all.append(metrics['all']['ece'])
 
-
 print('Expected Utility algorithm:', list_Expected_alg)
-print('Expected Utility experimental:',list_Expected_exp)
+print('Expected Utility experimental:', list_Expected_exp)
 print('Expected Utility observational:', list_Expected_obs)
 print('Expected Utility all:', list_Expected_all)
 
@@ -709,4 +875,3 @@ print("ECE Algorithm:", list_ece_alg)
 print("ECE Experimental", list_ece_exp)
 print("ECE Observational", list_ece_obs)
 print("ECE all", list_ece_all)
-
