@@ -801,6 +801,12 @@ print("Probability for the best subset in Do:", best_prob)
 for k in range(n_runs):
     De, De_test = train_test_split(De_all, test_size=0.3, random_state=k)
 
+    ATEforRx0 = (De_test.loc[De_test[treatment] == 0, outcome] == 0).mean()
+    ATEforRx1 = (De_test.loc[De_test[treatment] == 1, outcome] == 0).mean()
+    
+    print(f"ATEforRx0: {ATEforRx0:.3f}")
+    print(f"ATEforRx1: {ATEforRx1:.3f}")
+
     Do_De = pd.concat([Do, De], ignore_index=True)
 
     X_test = De_test[covariate_with_T]
