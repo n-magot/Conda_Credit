@@ -1,0 +1,91 @@
+def random_continuous_coefficient():
+    # Define the ranges
+    ranges = [(0.1, 0.7)]
+    # Choose a range randomly
+    chosen_range = ranges[np.random.choice(len(ranges))]
+    # Generate a random value within the chosen range
+    return np.random.uniform(*chosen_range)
+
+def Generate_De_source(sample_size, a_Z_Y, a_W_Y, random_seed=None):
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    # Latent variables
+    Z = np.random.normal(-2, 3, sample_size)  # target domain shift
+    W = np.random.normal(-1, 1, sample_size)  # target domain shift
+    uX = np.random.normal(0, 0.1, sample_size)  # noise for X
+    e = np.random.normal(-0.05, 0.05, sample_size)  # post-nonlinear noise for Y
+    uZtoY = np.random.normal(0, 0.1, sample_size)  # additive effect of Z → Y
+
+    # Treatment
+    X = np.random.binomial(1, 0.5, sample_size)
+
+    # Post-nonlinear model for X → Y
+    f1 = lambda x: np.sin(2 * np.pi * x)  # note: x is binary, so f1 acts on {0,1}
+    f2 = lambda u: np.tanh(u)
+
+    Y_core = f1(X) + e  # f1 + noise
+    Y_pnl = f2(Y_core)  # post-nonlinear output
+
+    # Combine influences on Y (latent)
+    Y = Y_pnl + a_Z_Y * Z + a_W_Y * np.cos(W) + uZtoY
+
+    X_exp = np.column_stack((X, Z, W))
+    return X_exp, Y
+
+
+def Generate_Do_target(sample_size, a_Z_Y, a_W_Y, random_seed=None):
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    # Latent variables
+    Z = np.random.normal(0, 1, sample_size)       # target domain shift
+    W = np.random.normal(0, 1, sample_size)       # target domain shift
+    uX = np.random.normal(0, 0.1, sample_size)  # noise for X
+    e = np.random.normal(-0.05, 0.05, sample_size)  # post-nonlinear noise for Y
+    uZtoY = np.random.normal(0, 0.1, sample_size)  # additive effect of Z → Y
+
+    # Treatment depends only on Z (strong confounding)
+    X_raw = np.sin(Z) + uX
+    X = (X_raw > 0).astype(int)
+
+    # Post-nonlinear model for X → Y
+    f1 = lambda x: np.sin(2 * np.pi * x)  # note: x is binary, so f1 acts on {0,1}
+    f2 = lambda u: np.tanh(u)
+
+    Y_core = f1(X) + e  # f1 + noise
+    Y_pnl = f2(Y_core)  # post-nonlinear output
+
+    # Combine influences on Y (latent)
+    Y = Y_pnl + a_Z_Y * Z + a_W_Y * np.cos(W) + uZtoY
+
+    X_obs = np.column_stack((X, Z, W))
+    return X_obs, Y
+
+def Generate_De_target(sample_size, a_Z_Y, a_W_Y, random_seed=None):
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    # Latent variables
+    Z = np.random.normal(0, 1, sample_size)  # target domain shift
+    W = np.random.normal(0, 1, sample_size)  # target domain shift
+    uX = np.random.normal(0, 0.1, sample_size)  # noise for X
+    e = np.random.normal(-0.05, 0.05, sample_size)  # post-nonlinear noise for Y
+    uZtoY = np.random.normal(0, 0.1, sample_size)  # additive effect of Z → Y
+
+    # Treatment
+    X = np.random.binomial(1, 0.5, sample_size)
+
+    # Post-nonlinear model for X → Y
+    f1 = lambda x: np.sin(2 * np.pi * x)  # note: x is binary, so f1 acts on {0,1}
+    f2 = lambda u: np.tanh(u)
+
+    Y_core = f1(X) + e  # f1 + noise
+    Y_pnl = f2(Y_core)  # post-nonlinear output
+
+    # Combine influences on Y (latent)
+    Y = Y_pnl + a_Z_Y * Z + a_W_Y * np.cos(W) + uZtoY
+
+    X_exp = np.column_stack((X, Z, W))
+
+    return X_exp, Y
